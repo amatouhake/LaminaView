@@ -3,8 +3,6 @@
 #include "mod/Config.h"
 #include "mod/LaminaView.h"
 
-#include "ll/api/event/EventBus.h"
-#include "ll/api/event/client/ClientExitLevelEvent.h"
 #include "ll/api/input/KeyRegistry.h"
 #include "ll/api/memory/Hook.h"
 
@@ -55,7 +53,6 @@ NightVision& NightVision::getInstance() {
 }
 
 void NightVision::load(Config const& config) noexcept {
-    mOwnedConfig = std::make_unique<Config>(config);
     if (!config.nightvision.enabled) return;
     try {
         auto& key =
@@ -71,9 +68,6 @@ void NightVision::install() noexcept {
     if (mInstalled || !mLoaded) return;
     try {
         Hooks::hook();
-        mExitListener = ll::event::EventBus::getInstance().emplaceListener<ll::event::ClientExitLevelEvent>(
-            [this](ll::event::ClientExitLevelEvent&) { onWorldLeft(); }
-        );
         mInstalled = true;
     } catch (...) {
         mInstalled = false;
@@ -83,10 +77,6 @@ void NightVision::install() noexcept {
 void NightVision::uninstall() noexcept {
     if (!mInstalled) return;
     try {
-        if (mExitListener) {
-            ll::event::EventBus::getInstance().removeListener(mExitListener);
-            mExitListener.reset();
-        }
         Hooks::unhook();
     } catch (...) {
     }
@@ -103,15 +93,17 @@ void NightVision::toggle() {
 void NightVision::applyOverride(BaseLightData& lightData) {
     // Mirror what the vanilla night-vision effect writes into the light
     // data: full night-vision scale with the previous-frame value matched so
-    // there is no fade-in, underwater brightened to the same scale so caves
-    // under water stay readable without changing the water tint itself.
-    lightData.mNightvisionActive         = true;
-    lightData.mNightvisionScale          = 1.0f;
-    lightData.mUnderwaterVision          = true;
-    lightData.mUnderwaterScale           = 1.0f;
-    lightData.mDarkenWorldAmount         = 0.0f;
-    lightData.mPreviousDarkenWorldAmount = 0.0f;
-    lightData.mDarknessFactor            = 0.0f;
+    // there is no fade-in. Underwater is only ever brightened when the game
+    // already flagged it: the underwater flag itself is never set, so above
+    // water the tint path is untouched.
+    lightData.mNightvisionActive = true;
+    lightData.mNightvisionScale  = 1.0f;
+    if (lightData.mUnderwaterVision) {
+        lightData.mUnderwaterScale = 1.0f;
+    }
+    lightData.mDarkenWorldAmount           = 0.0f;
+    lightData.mPreviousDarkenWorldAmount   = 0.0f;
+    lightData.mDarknessFactor              = 0.0f;
     lightData.mDarknessFactorPreviousFrame = 0.0f;
 }
 

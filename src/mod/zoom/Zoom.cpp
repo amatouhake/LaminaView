@@ -6,10 +6,12 @@
 #include "ll/api/event/EventBus.h"
 #include "ll/api/event/client/ClientExitLevelEvent.h"
 #include "ll/api/event/input/MouseInputEvent.h"
+#include "ll/api/event/render/UIRenderEvent.h"
 #include "ll/api/input/KeyRegistry.h"
 #include "ll/api/memory/Hook.h"
 
 #include "mc/client/game/IClientInstance.h"
+#include "mc/client/game/MinecraftGame.h"
 #include "mc/client/player/LocalPlayer.h"
 #include "mc/client/renderer/game/LevelRendererPlayer.h"
 #include "mc/deps/core/math/Vec2.h"
@@ -17,6 +19,7 @@
 #include "mc/deps/renderer/Camera.h"
 
 #include <string>
+#include <type_traits>
 
 class Player;
 
@@ -25,6 +28,13 @@ namespace lamina_view::zoom {
 namespace {
 
 constexpr std::string_view kKeyName = "zoom";
+
+// Vec2's second axis is `z` (x, y/z/b/p union) in this SDK generation: yaw
+// lives in x, pitch in z. Enforced at compile time so an SDK regeneration
+// that renames the axis breaks the build instead of silently scrambling
+// look direction.
+static_assert(std::is_same_v<decltype(::Vec2::x), float>);
+static_assert(std::is_same_v<decltype(::Vec2::z), float>);
 
 LL_TYPE_INSTANCE_HOOK(
     SetupCameraHook,
@@ -77,10 +87,26 @@ LL_TYPE_INSTANCE_HOOK(
     origin(player);
 }
 
-using Hooks = ll::memory::HookRegistrar<SetupCameraHook, ApplyTurnDeltaHook, DimensionChangedHook>;
+// Alt-tab / Win-key / app suspend: the key-up may never arrive. MinecraftGame
+// owns the focus-loss virtual (ClientInstance has only onAppSuspended).
+LL_TYPE_INSTANCE_HOOK(
+    AppFocusLostHook,
+    ll::memory::HookPriority::Normal,
+    MinecraftGame,
+    &MinecraftGame::$onAppFocusLost,
+    void
+) {
+    Zoom::getInstance().onFocusLost();
+    origin();
+}
+
+using Hooks =
+    ll::memory::HookRegistrar<SetupCameraHook, ApplyTurnDeltaHook, DimensionChangedHook, AppFocusLostHook>;
 
 // Only the HUD screen leaves hotkeys and the wheel to gameplay; everywhere
-// else (inventory, chest, pause, chat, ...) input belongs to the UI.
+// else (inventory, chest, pause, chat, ...) input belongs to the UI. Compared
+// by prefix so suffixed variants ("hud_screen_lite", ...) behave the same;
+// the observed names are logged in trace builds (see onPressed).
 bool isHudScreen(std::string const& screenName) { return screenName.rfind("hud_screen", 0) == 0; }
 
 } // namespace
@@ -91,21 +117,26 @@ Zoom& Zoom::getInstance() {
 }
 
 void Zoom::load(Config const& config) noexcept {
-    mOwnedConfig = std::make_unique<Config>(config);
     if (!config.zoom.enabled) return;
-    mState = ZoomState(config.zoom.defaultLevel, config.zoom.minLevel, config.zoom.maxLevel, config.zoom.wheelStep);
+    // Bounds must be positive zoom factors; anything else falls back to the
+    // 1.5x-10x, 3x-default, 0.5-step schema so a bad config can never invert
+    // the FOV or divide by zero.
+    float minLevel = config.zoom.minLevel > 0.0f ? config.zoom.minLevel : 1.5f;
+    float maxLevel = config.zoom.maxLevel > 0.0f ? config.zoom.maxLevel : 10.0f;
+    if (minLevel > maxLevel) std::swap(minLevel, maxLevel);
+    mState.configure(config.zoom.defaultLevel, minLevel, maxLevel, config.zoom.wheelStep);
     try {
         auto& key = ll::input::KeyRegistry::getInstance().getOrCreateKey(kKeyName, {config.zoom.keyCode});
         key.registerButtonDownHandler([this](::FocusImpact, ::IClientInstance& client) { onPressed(client); });
         key.registerButtonUpHandler([this](::FocusImpact, ::IClientInstance&) { onReleased(); });
-        mLoaded = true;
+        mLoaded.store(true, std::memory_order_relaxed);
     } catch (...) {
-        mLoaded = false;
+        mLoaded.store(false, std::memory_order_relaxed);
     }
 }
 
 void Zoom::install() noexcept {
-    if (mInstalled || !mLoaded) return;
+    if (installed() || !mLoaded.load(std::memory_order_relaxed)) return;
     try {
         Hooks::hook();
         mWheelListener =
@@ -113,34 +144,58 @@ void Zoom::install() noexcept {
                 [this](ll::event::input::MouseInputEvent& event) {
                     // Only wheel events are ours; movement and buttons pass
                     // through untouched so inventory/menu scrolling and
-                    // clicking keep working. The hold itself is HUD-gated in
-                    // onPressed, so an unconsumed wheel here means zoom is
-                    // not active.
+                    // clicking keep working. HUD-gated per event against the
+                    // pressing client: holding C on the HUD, opening a menu
+                    // mid-hold and scrolling must scroll the menu, not the
+                    // zoom level — the hold itself is dropped by the screen
+                    // watcher before the next frame anyway.
                     if (event.actionButtonId() != ::MouseAction::ActionWheel) return;
                     if (!installed() || !held()) return;
                     if (event.buttonData() != ::MouseAction::DataUp
                         && event.buttonData() != ::MouseAction::DataDown) {
                         return;
                     }
-                    onWheel(event.buttonData() == ::MouseAction::DataDown ? 1 : -1);
+                    auto* client = mClient.load(std::memory_order_relaxed);
+                    if (!client || !isHudScreen(client->getScreenName())) return;
+                    onWheel(
+                        event.buttonData() == ::MouseAction::DataDown ? 1 : -1,
+                        client
+                    );
                     event.cancel();
+                }
+            );
+        // Any non-HUD screen opened mid-hold (inventory, pause, chat, ...)
+        // owns the input from that frame on: drop the hold so neither FOV
+        // nor the wheel can stick. Runs every frame while installed.
+        mScreenListener =
+            ll::event::EventBus::getInstance().emplaceListener<ll::event::AfterUIRenderEvent>(
+                [this](ll::event::AfterUIRenderEvent&) {
+                    if (!installed() || !held()) return;
+                    auto* client = mClient.load(std::memory_order_relaxed);
+                    if (!client) return;
+                    if (!isHudScreen(client->getScreenName())) onReleased();
                 }
             );
         mExitListener = ll::event::EventBus::getInstance().emplaceListener<ll::event::ClientExitLevelEvent>(
             [this](ll::event::ClientExitLevelEvent&) { onWorldLeft(); }
         );
-        mInstalled = true;
+        mInstalled.store(true, std::memory_order_relaxed);
     } catch (...) {
-        mInstalled = false;
+        mInstalled.store(false, std::memory_order_relaxed);
     }
 }
 
 void Zoom::uninstall() noexcept {
-    if (!mInstalled) return;
+    if (!installed()) return;
+    mInstalled.store(false, std::memory_order_relaxed);
     try {
         if (mWheelListener) {
             ll::event::EventBus::getInstance().removeListener(mWheelListener);
             mWheelListener.reset();
+        }
+        if (mScreenListener) {
+            ll::event::EventBus::getInstance().removeListener(mScreenListener);
+            mScreenListener.reset();
         }
         if (mExitListener) {
             ll::event::EventBus::getInstance().removeListener(mExitListener);
@@ -151,34 +206,47 @@ void Zoom::uninstall() noexcept {
     }
     // Hooks are gone so FOV/sensitivity are already vanilla again; drop the
     // transient hold so a later install starts clean.
+    mClient.store(nullptr, std::memory_order_relaxed);
     mState.resetTransient();
-    mInstalled = false;
 }
 
 void Zoom::onPressed(IClientInstance& client) {
-    if (!mInstalled || held()) return;
+    if (!installed() || held()) return;
     // A menu/container screen open under the pointer owns the key, not zoom.
-    if (!isHudScreen(client.getScreenName())) return;
+    std::string const screen = client.getScreenName();
+#ifdef LAMINAVIEW_TRACE
+    LaminaView::getInstance().getSelf().getLogger().debug("Zoom press on screen '{}'", screen);
+#endif
+    if (!isHudScreen(screen)) return;
+    mClient.store(&client, std::memory_order_relaxed);
     mState.press();
     LaminaView::getInstance().getSelf().getLogger().debug("Zoom on (level {})", mState.level());
 }
 
 void Zoom::onReleased() {
-    if (!mInstalled || !held()) return;
+    if (!installed() || !held()) return;
     mState.release();
     LaminaView::getInstance().getSelf().getLogger().debug("Zoom off");
 }
 
-void Zoom::onWheel(int direction) { mState.wheel(direction); }
+void Zoom::onWheel(int direction, IClientInstance* client) {
+    if (!installed() || !held()) return;
+    // The pressing client must still show the HUD; otherwise the wheel
+    // belongs to the menu that opened mid-hold.
+    auto* current = mClient.load(std::memory_order_relaxed);
+    if (client != nullptr && client != current) return;
+    if (current == nullptr || !isHudScreen(current->getScreenName())) return;
+    mState.wheel(direction);
+}
 
 void Zoom::onWorldLeft() {
-    if (!mInstalled) return;
+    if (!installed()) return;
     if (held()) LaminaView::getInstance().getSelf().getLogger().debug("Zoom released (world left)");
     mState.resetTransient();
 }
 
 void Zoom::onFocusLost() {
-    if (!mInstalled) return;
+    if (!installed()) return;
     if (held()) LaminaView::getInstance().getSelf().getLogger().debug("Zoom released (focus lost)");
     mState.resetTransient();
 }

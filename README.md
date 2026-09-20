@@ -22,7 +22,10 @@ component, no cheats or commands, no status-effect injection.
   Active only while held (and only from the HUD screen); mouse wheel adjusts
   the level while zoomed; look sensitivity scales with the zoom level.
   Releasing restores FOV and sensitivity exactly. Zoom never steals the wheel
-  from inventories or menus, and vanilla spyglass behaviour is unchanged.
+  from inventories or menus (opening a menu mid-hold drops the hold), and
+  vanilla spyglass behaviour is unchanged. A stuck hold is impossible by
+  construction: it clears on key-up, on any non-HUD screen, on app focus
+  loss/suspend, and on world unload/disconnect/dimension change.
 
 The two features are independent (separate state, keys, config and cleanup):
 if one fails to initialise, the other still works.
@@ -31,17 +34,18 @@ if one fails to initialise, the other still works.
 
 * `src/mod/vision/` hooks the shared `BaseLightTextureImageBuilder::buildImage`
   all dimensions render through, forcing night-vision light levels into the
-  per-frame copy. The vanilla brightness option is never written, no effect
-  is injected, and the hook is a pass-through when disabled.
+  per-frame copy (underwater scale only raised when already flagged). The
+  vanilla brightness option is never written, no effect is injected, and the
+  hook is a pass-through when disabled.
 * `src/mod/zoom/` narrows the camera FOV in `LevelRendererPlayer::setupCamera`
   while held and scales the `LocalPlayer::_applyTurnDelta` look delta by
-  1/level. Both hooks pass through untouched when not held; world
-  unload/disconnect and dimension changes clear a stuck hold.
+  1/level (Vec2 yaw = x, pitch = z, compile-time asserted). Both hooks pass
+  through untouched when not held; the hold clears on key-up, non-HUD screen,
+  focus loss/suspend, world unload/disconnect and dimension change.
 
 ## Configuration
 
 On first start LaminaView writes `mods/LaminaView/config/config.json` with
-the defaults below:
 
 ```json
 {

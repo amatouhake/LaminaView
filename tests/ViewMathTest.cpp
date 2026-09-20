@@ -122,9 +122,11 @@ void testSwappedBoundsSanitized() {
     CHECK(near(z.level(), 3.0f));
 }
 
-void testOutOfRangeDefaultFallsBack() {
-    ZoomState z(99.0f, 1.5f, 10.0f, 0.5f);
-    CHECK(z.level() >= 1.5f && z.level() <= 10.0f);
+void testOutOfRangeDefaultClampsToBound() {
+    ZoomState hi(99.0f, 1.5f, 10.0f, 0.5f);
+    CHECK(near(hi.level(), 10.0f));
+    ZoomState lo(0.1f, 1.5f, 10.0f, 0.5f);
+    CHECK(near(lo.level(), 1.5f));
 }
 
 void testNightVisionToggle() {
@@ -158,7 +160,7 @@ int main() {
     testReleaseRestoresExactly();
     testResetTransientClearsStuckHold();
     testSwappedBoundsSanitized();
-    testOutOfRangeDefaultFallsBack();
+    testOutOfRangeDefaultClampsToBound();
     testNightVisionToggle();
     testNightVisionIdempotent();
 
