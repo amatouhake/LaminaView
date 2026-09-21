@@ -2,6 +2,8 @@
 
 #include "ll/api/mod/NativeMod.h"
 
+#include "mod/Config.h"
+
 namespace lamina_view {
 
 class LaminaView {
@@ -12,6 +14,8 @@ public:
     LaminaView() : mSelf(*ll::mod::NativeMod::current()) {}
 
     [[nodiscard]] ll::mod::NativeMod& getSelf() const { return mSelf; }
+
+    [[nodiscard]] Config const& getConfig() const { return mConfig; }
 
     /// @return True if the mod is loaded successfully.
     bool load();
@@ -24,6 +28,7 @@ public:
 
 private:
     ll::mod::NativeMod& mSelf;
+    Config              mConfig;
 };
 
 } // namespace lamina_view

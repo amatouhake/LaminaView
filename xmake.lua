@@ -10,6 +10,14 @@ option("target_type")
     set_values("client")
 option_end()
 
+-- Diagnostic build: raises the mod's logger to Debug and mirrors it, flushed
+-- immediately, into mods/LaminaView/trace.log. Off by default.
+option("trace")
+    set_default(false)
+    set_showmenu(true)
+    set_description("Enable verbose runtime diagnostics")
+option_end()
+
 -- The "v" form checks out the upstream git tag directly; the LeviMC xmake-repo
 -- had not published a 26.51.3 version entry when this was written. Switch to
 -- "levilamina 26.51.3" once it has one.
@@ -34,7 +42,6 @@ target("LaminaView")
             "-Wno-invalid-offsetof",
             "-Wno-c++2b-extensions",
             "-Wno-microsoft-include",
-            "-Wno-overloaded-virtual",
             "-Wno-ignored-qualifiers",
             "-Wno-missing-field-initializers",
             "-Wno-potentially-evaluated-expression",
@@ -44,9 +51,25 @@ target("LaminaView")
         set_toolchains("clang-cl")
     end
     add_packages("levilamina")
+    if has_config("trace") then
+        add_defines("LAMINAVIEW_TRACE")
+    end
     set_kind("shared")
     set_languages("c++20")
     set_symbols("debug")
     add_headerfiles("src/**.h")
     add_files("src/**.cpp")
     add_includedirs("src")
+
+-- Unit tests for the pure (game-independent) view math/state. Not built by
+-- default: `xmake build LaminaViewTests && xmake run LaminaViewTests`.
+target("LaminaViewTests")
+    set_kind("binary")
+    set_default(false)
+    set_languages("c++20")
+    add_includedirs("src")
+    add_files("tests/**.cpp")
+    if is_plat("windows") then
+        add_cxflags("/utf-8", "/W4")
+        set_toolchains("clang-cl")
+    end

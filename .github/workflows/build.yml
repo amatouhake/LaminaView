@@ -35,6 +35,11 @@ jobs:
       - run: |
           xmake -v -y
 
+      - name: Build and run view math tests
+        run: |
+          xmake build -y LaminaViewTests
+          xmake run LaminaViewTests
+
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ github.event.repository.name }}-${{ github.sha }}-client-windows-x64
