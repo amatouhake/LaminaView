@@ -15,15 +15,17 @@ namespace lamina_view::vision {
 
 /// Pure client-side fullbright-style NightVision.
 ///
-/// Implementation: hooks `BaseLightTextureImageBuilder::buildImage` (the
-/// virtual every dimension's light-texture builder shares) and forces the
-/// light data the image is built from to night-vision levels before calling
-/// through. Nothing is written to the vanilla brightness option, no
-/// status effect is injected, no packet is sent. Underwater keeps its own
-/// path: only a pre-existing underwater scale is raised, the underwater flag
-/// itself is never set, so the water tint is unchanged above water.
-/// Disabling restores rendering exactly because the hook becomes a
-/// pass-through.
+/// Implementation: hooks `BaseLightTextureImageBuilder::createBaseLightTextureData`
+/// (shared by the Overworld and The End) and the Nether builder's override,
+/// and forces the per-frame light data they produce to night-vision levels.
+/// The game only re-rasterizes its light LUT when that data changes, so this
+/// is the one place the override is visible (a `buildImage` hook never runs
+/// while nothing else changes - verified in-game). Nothing is written to the
+/// vanilla brightness option, no status effect is injected, no packet is
+/// sent. Underwater keeps its own path: only a pre-existing underwater scale
+/// is raised, the underwater flag itself is never set, so the water tint is
+/// unchanged above water. Disabling restores rendering exactly because the
+/// produced data goes back to vanilla and the game rebuilds the LUT from it.
 ///
 /// The toggle key is HUD-gated like Zoom: presses from any non-HUD screen
 /// (chat, Creative search, anvil, inventory, ...) belong to the UI and are
@@ -58,11 +60,18 @@ public:
     /// own the key, not NightVision.
     void toggle(IClientInstance& client);
 
+    /// Render-thread entry point from the light-data hooks: applies the
+    /// override to freshly produced data when enabled, otherwise leaves it.
+    void overrideProducedData(BaseLightData* lightData);
+
     static void applyOverride(BaseLightData& lightData);
 
 private:
     NightVisionState  mState;
     std::atomic<bool> mLoaded{false};
     std::atomic<bool> mInstalled{false};
+#ifdef LAMINAVIEW_TRACE
+    std::atomic<bool> mTraceApplied{false};
+#endif
 };
 } // namespace lamina_view::vision

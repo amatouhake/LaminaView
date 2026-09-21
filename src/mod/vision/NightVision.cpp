@@ -10,7 +10,7 @@
 #include "mc/client/game/IClientInstance.h"
 #include "mc/client/renderer/ptexture/BaseLightData.h"
 #include "mc/client/renderer/ptexture/BaseLightTextureImageBuilder.h"
-#include "mc/deps/core/image/Image.h"
+#include "mc/client/world/level/dimension/NetherLightTextureImageBuilder.h"
 
 namespace lamina_view::vision {
 
@@ -18,34 +18,44 @@ namespace {
 
 constexpr std::string_view kKeyName = "nightvision";
 
-// Hook the shared base implementation so Overworld, Nether, The End and any
-// custom dimension pick up the override through the same virtual.
+// The light texture is only re-rasterized when the per-frame BaseLightData
+// differs from the previous one (LightTexture::refresh compares them;
+// observed in-game: buildImage runs once on world entry and then never
+// again while nothing changes). Overriding inside buildImage therefore does
+// nothing visible. The override is applied where the data is produced:
+// createBaseLightTextureData. The shared base implementation serves the
+// Overworld and The End; the Nether builder overrides it, so that one is
+// hooked as well. Toggling changes the produced data, the game notices the
+// difference and rebuilds the LUT itself, on and off.
 LL_TYPE_INSTANCE_HOOK(
-    BuildImageHook,
+    CreateBaseLightDataHook,
     ll::memory::HookPriority::Normal,
     BaseLightTextureImageBuilder,
-    &BaseLightTextureImageBuilder::$buildImage,
-    bool,
-    ::BaseLightData const& lightData,
-    ::mce::Image*          targetImage,
-    uint                   imageLength,
-    float                  a,
-    float                  ambientBoost,
-    bool                   clampToMinimum
+    &BaseLightTextureImageBuilder::$createBaseLightTextureData,
+    ::std::unique_ptr<::BaseLightData>,
+    ::IClientInstance*     client,
+    ::BaseLightData const& currentData
 ) {
-    auto& self = NightVision::getInstance();
-    if (!self.enabled()) {
-        return origin(lightData, targetImage, imageLength, a, ambientBoost, clampToMinimum);
-    }
-    // The input is const, but the pipeline only reads it to rasterize the
-    // 16x16 light LUT for this frame; adjusting the copy is a pure visual
-    // override with no effect on saved options or the world.
-    ::BaseLightData overridden = lightData;
-    NightVision::applyOverride(overridden);
-    return origin(overridden, targetImage, imageLength, a, ambientBoost, clampToMinimum);
+    auto data = origin(client, currentData);
+    NightVision::getInstance().overrideProducedData(data.get());
+    return data;
 }
 
-using Hooks = ll::memory::HookRegistrar<BuildImageHook>;
+LL_TYPE_INSTANCE_HOOK(
+    CreateNetherLightDataHook,
+    ll::memory::HookPriority::Normal,
+    NetherLightTextureImageBuilder,
+    &NetherLightTextureImageBuilder::$createBaseLightTextureData,
+    ::std::unique_ptr<::BaseLightData>,
+    ::IClientInstance*     client,
+    ::BaseLightData const& currentData
+) {
+    auto data = origin(client, currentData);
+    NightVision::getInstance().overrideProducedData(data.get());
+    return data;
+}
+
+using Hooks = ll::memory::HookRegistrar<CreateBaseLightDataHook, CreateNetherLightDataHook>;
 
 } // namespace
 
@@ -96,6 +106,32 @@ void NightVision::toggle(IClientInstance& client) {
     if (!lamina_view::isHudScreen(client.getScreenName())) return;
     mState.toggle();
     LaminaView::getInstance().getSelf().getLogger().debug("NightVision {}", mState.enabled() ? "on" : "off");
+}
+
+void NightVision::overrideProducedData(BaseLightData* lightData) {
+    if (!lightData) return;
+    bool const enabled = mState.enabled();
+    if (enabled) {
+        applyOverride(*lightData);
+    }
+#ifdef LAMINAVIEW_TRACE
+    // Log only the transitions the render thread actually sees, so the
+    // trace shows when the produced light data starts/stops being overridden
+    // (the game rebuilds its light LUT on exactly those frames).
+    bool const wasApplied = mTraceApplied.exchange(enabled, std::memory_order_relaxed);
+    if (wasApplied != enabled) {
+        LaminaView::getInstance().getSelf().getLogger().debug(
+            "Light data override {} (nv={}/{:.2f} underwater={}/{:.2f} skyDarken={:.2f} gamma={:.2f})",
+            enabled ? "applied" : "cleared",
+            lightData->mNightvisionActive,
+            lightData->mNightvisionScale,
+            lightData->mUnderwaterVision,
+            lightData->mUnderwaterScale,
+            lightData->mSkyDarken,
+            lightData->mGamma
+        );
+    }
+#endif
 }
 
 void NightVision::applyOverride(BaseLightData& lightData) {

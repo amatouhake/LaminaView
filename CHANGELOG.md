@@ -11,6 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Runtime-validated on 1.26.51 / LeviLamina 26.51.3: NightVision now overrides
+  the light data where the game produces it
+  (`createBaseLightTextureData`, Overworld/End base + Nether builder) instead
+  of inside `buildImage`, which the client only runs when that data changes
+  (the toggle previously had no visible effect). Zoom narrows
+  `LevelRendererPlayer::getFov` (the value the projection is built from)
+  instead of writing `mce::Camera::mFov` after `setupCamera` (no visible
+  effect), and reads the wheel's signed notch delta (every notch previously
+  fell through to the hotbar while zoomed).
 - NightVision toggle is HUD-gated: key presses from chat, Creative search,
   anvil, inventory and other non-HUD screens are ignored, so typing never
   toggles brightness. Zoom wheel follows the universal convention (scroll up

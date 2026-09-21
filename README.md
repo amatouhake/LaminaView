@@ -34,13 +34,16 @@ if one fails to initialise, the other still works.
 
 ## How it works
 
-* `src/mod/vision/` hooks the shared `BaseLightTextureImageBuilder::buildImage`
-  all dimensions render through, forcing night-vision light levels into the
-  per-frame copy (underwater scale only raised when already flagged). The
-  vanilla brightness option is never written, no effect is injected, and the
-  hook is a pass-through when disabled.
-* `src/mod/zoom/` narrows the camera FOV in `LevelRendererPlayer::setupCamera`
-  while held and scales the `LocalPlayer::_applyTurnDelta` look delta by
+* `src/mod/vision/` hooks `BaseLightTextureImageBuilder::createBaseLightTextureData`
+  (shared by the Overworld and The End) and the Nether builder's override,
+  forcing night-vision light levels into the per-frame light data the game
+  rasterizes its light LUT from (underwater scale only raised when already
+  flagged). The game rebuilds the LUT itself whenever that data changes, so
+  the toggle takes effect on the next frame both ways. The vanilla brightness
+  option is never written, no effect is injected, and the hook is a
+  pass-through when disabled.
+* `src/mod/zoom/` narrows the FOV `LevelRendererPlayer::getFov` hands to the
+  projection while held and scales the `LocalPlayer::_applyTurnDelta` look delta by
   1/level (Vec2 yaw = x, pitch = z, compile-time asserted). Both hooks pass
   through untouched when not held; the hold clears on key-up, non-HUD screen,
   focus loss/suspend, world unload/disconnect and dimension change.

@@ -15,9 +15,11 @@ struct Config;
 
 namespace lamina_view::zoom {
 
-/// Hold-to-zoom. FOV-based only: while the key is held the camera setup sees
-/// a narrowed FOV; on release the exact previous FOV returns because the hook
-/// becomes a pass-through again. Mouse-look sensitivity is scaled by 1/level
+/// Hold-to-zoom. FOV-based only: while the key is held
+/// `LevelRendererPlayer::getFov` (the value the projection is built from,
+/// after vanilla's own sprint/spyglass/effect modifiers) returns a narrowed
+/// FOV; on release the exact previous FOV returns because the hook becomes a
+/// pass-through again. Mouse-look sensitivity is scaled by 1/level
 /// by scaling the turn delta while held and restored on release.
 /// The mouse wheel adjusts the level only while zoomed from the HUD screen;
 /// anywhere else the wheel is never consumed, and vanilla spyglass scoping
@@ -67,6 +69,11 @@ public:
     /// App focus loss / suspend: same guarantee.
     void onFocusLost();
 
+#ifdef LAMINAVIEW_TRACE
+    /// Render-thread trace: logs the base -> zoomed FOV once per hold.
+    void traceFov(float base, float zoomed);
+#endif
+
 private:
     /// The client that pressed the key (the long-lived game client,
     /// cleared on uninstall). Used to re-check the current screen on the
@@ -79,6 +86,9 @@ private:
     ll::event::ListenerPtr      mExitListener;
     ll::event::ListenerPtr      mWheelListener;
     ll::event::ListenerPtr      mScreenListener;
+#ifdef LAMINAVIEW_TRACE
+    std::atomic<bool>           mTraceFovLogged{false};
+#endif
 };
 
 } // namespace lamina_view::zoom

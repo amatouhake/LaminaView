@@ -17,7 +17,6 @@
 #include "mc/client/renderer/game/LevelRendererPlayer.h"
 #include "mc/deps/core/math/Vec2.h"
 #include "mc/deps/input/MouseAction.h"
-#include "mc/deps/renderer/Camera.h"
 
 #include <string>
 #include <type_traits>
@@ -37,21 +36,30 @@ constexpr std::string_view kKeyName = "zoom";
 static_assert(std::is_same_v<decltype(::Vec2::x), float>);
 static_assert(std::is_same_v<decltype(::Vec2::z), float>);
 
+// The projection is built from LevelRendererPlayer::getFov (base FOV
+// interpolated over the frame plus the variable-FOV modifiers: sprint,
+// spyglass, effects). Writing mce::Camera::mFov after setupCamera does not
+// reach the projection matrix - verified in-game: the view did not change at
+// all - so the FOV is narrowed at its source instead.
 LL_TYPE_INSTANCE_HOOK(
-    SetupCameraHook,
+    GetFovHook,
     ll::memory::HookPriority::Normal,
     LevelRendererPlayer,
-    &LevelRendererPlayer::setupCamera,
-    void,
-    ::mce::Camera& camera,
-    float          a
+    &LevelRendererPlayer::getFov,
+    float,
+    float a,
+    bool  enableVariableFOV
 ) {
-    origin(camera, a);
-    auto& zoom = Zoom::getInstance();
+    float const fov  = origin(a, enableVariableFOV);
+    auto&       zoom = Zoom::getInstance();
     // Pass-through unless zoomed: the vanilla FOV (including spyglass and
     // status-effect modifiers) is never otherwise touched.
-    if (!zoom.installed() || !zoom.held()) return;
-    camera.mFov = zoom.zoomedFov(camera.mFov);
+    if (!zoom.installed() || !zoom.held()) return fov;
+    float const zoomed = zoom.zoomedFov(fov);
+#ifdef LAMINAVIEW_TRACE
+    zoom.traceFov(fov, zoomed);
+#endif
+    return zoomed;
 }
 
 LL_TYPE_INSTANCE_HOOK(
@@ -102,7 +110,7 @@ LL_TYPE_INSTANCE_HOOK(
 }
 
 using Hooks =
-    ll::memory::HookRegistrar<SetupCameraHook, ApplyTurnDeltaHook, DimensionChangedHook, AppFocusLostHook>;
+    ll::memory::HookRegistrar<GetFovHook, ApplyTurnDeltaHook, DimensionChangedHook, AppFocusLostHook>;
 
 } // namespace
 
@@ -146,15 +154,17 @@ void Zoom::install() noexcept {
                     // watcher before the next frame anyway.
                     if (event.actionButtonId() != ::MouseAction::ActionWheel) return;
                     if (!installed() || !held()) return;
-                    if (event.buttonData() != ::MouseAction::DataUp
-                        && event.buttonData() != ::MouseAction::DataDown) {
-                        return;
-                    }
+                    // For wheel actions `data` is the signed notch delta
+                    // (+120 per notch away from the user on Windows), not
+                    // DataUp/DataDown - verified in-game: matching those
+                    // constants let every notch through to the hotbar.
+                    int const delta = event.buttonData();
+                    if (delta == 0) return;
                     auto* client = mClient.load(std::memory_order_relaxed);
                     if (!client || !lamina_view::isHudScreen(client->getScreenName())) return;
                     // Universal convention: scroll up zooms in, scroll down
                     // zooms out.
-                    onWheel(event.buttonData() == ::MouseAction::DataUp ? 1 : -1, client);
+                    onWheel(delta > 0 ? 1 : -1, client);
                     event.cancel();
                 }
             );
@@ -220,6 +230,9 @@ void Zoom::onPressed(IClientInstance& client) {
 void Zoom::onReleased() {
     if (!installed() || !held()) return;
     mState.release();
+#ifdef LAMINAVIEW_TRACE
+    mTraceFovLogged.store(false, std::memory_order_relaxed);
+#endif
     LaminaView::getInstance().getSelf().getLogger().debug("Zoom off");
 }
 
@@ -231,7 +244,19 @@ void Zoom::onWheel(int direction, IClientInstance* client) {
     if (client != nullptr && client != current) return;
     if (current == nullptr || !lamina_view::isHudScreen(current->getScreenName())) return;
     mState.wheel(direction);
+#ifdef LAMINAVIEW_TRACE
+    LaminaView::getInstance().getSelf().getLogger().debug("Zoom wheel {:+d} -> level {}", direction, mState.level());
+#endif
 }
+
+#ifdef LAMINAVIEW_TRACE
+void Zoom::traceFov(float base, float zoomed) {
+    // One line per hold, from the render thread, the first time the
+    // narrowed FOV is actually handed to the projection.
+    if (mTraceFovLogged.exchange(true, std::memory_order_relaxed)) return;
+    LaminaView::getInstance().getSelf().getLogger().debug("Zoom FOV {:.1f} -> {:.1f}", base, zoomed);
+}
+#endif
 
 void Zoom::onWorldLeft() {
     if (!installed()) return;
