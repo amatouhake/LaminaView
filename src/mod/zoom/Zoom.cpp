@@ -2,6 +2,7 @@
 
 #include "mod/Config.h"
 #include "mod/LaminaView.h"
+#include "mod/Screens.h"
 
 #include "ll/api/event/EventBus.h"
 #include "ll/api/event/client/ClientExitLevelEvent.h"
@@ -103,12 +104,6 @@ LL_TYPE_INSTANCE_HOOK(
 using Hooks =
     ll::memory::HookRegistrar<SetupCameraHook, ApplyTurnDeltaHook, DimensionChangedHook, AppFocusLostHook>;
 
-// Only the HUD screen leaves hotkeys and the wheel to gameplay; everywhere
-// else (inventory, chest, pause, chat, ...) input belongs to the UI. Compared
-// by prefix so suffixed variants ("hud_screen_lite", ...) behave the same;
-// the observed names are logged in trace builds (see onPressed).
-bool isHudScreen(std::string const& screenName) { return screenName.rfind("hud_screen", 0) == 0; }
-
 } // namespace
 
 Zoom& Zoom::getInstance() {
@@ -156,11 +151,10 @@ void Zoom::install() noexcept {
                         return;
                     }
                     auto* client = mClient.load(std::memory_order_relaxed);
-                    if (!client || !isHudScreen(client->getScreenName())) return;
-                    onWheel(
-                        event.buttonData() == ::MouseAction::DataDown ? 1 : -1,
-                        client
-                    );
+                    if (!client || !lamina_view::isHudScreen(client->getScreenName())) return;
+                    // Universal convention: scroll up zooms in, scroll down
+                    // zooms out.
+                    onWheel(event.buttonData() == ::MouseAction::DataUp ? 1 : -1, client);
                     event.cancel();
                 }
             );
@@ -173,7 +167,7 @@ void Zoom::install() noexcept {
                     if (!installed() || !held()) return;
                     auto* client = mClient.load(std::memory_order_relaxed);
                     if (!client) return;
-                    if (!isHudScreen(client->getScreenName())) onReleased();
+                    if (!lamina_view::isHudScreen(client->getScreenName())) onReleased();
                 }
             );
         mExitListener = ll::event::EventBus::getInstance().emplaceListener<ll::event::ClientExitLevelEvent>(
@@ -217,7 +211,7 @@ void Zoom::onPressed(IClientInstance& client) {
 #ifdef LAMINAVIEW_TRACE
     LaminaView::getInstance().getSelf().getLogger().debug("Zoom press on screen '{}'", screen);
 #endif
-    if (!isHudScreen(screen)) return;
+    if (!lamina_view::isHudScreen(screen)) return;
     mClient.store(&client, std::memory_order_relaxed);
     mState.press();
     LaminaView::getInstance().getSelf().getLogger().debug("Zoom on (level {})", mState.level());
@@ -235,7 +229,7 @@ void Zoom::onWheel(int direction, IClientInstance* client) {
     // belongs to the menu that opened mid-hold.
     auto* current = mClient.load(std::memory_order_relaxed);
     if (client != nullptr && client != current) return;
-    if (current == nullptr || !isHudScreen(current->getScreenName())) return;
+    if (current == nullptr || !lamina_view::isHudScreen(current->getScreenName())) return;
     mState.wheel(direction);
 }
 

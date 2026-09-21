@@ -2,10 +2,12 @@
 
 #include "mod/Config.h"
 #include "mod/LaminaView.h"
+#include "mod/Screens.h"
 
 #include "ll/api/input/KeyRegistry.h"
 #include "ll/api/memory/Hook.h"
 
+#include "mc/client/game/IClientInstance.h"
 #include "mc/client/renderer/ptexture/BaseLightData.h"
 #include "mc/client/renderer/ptexture/BaseLightTextureImageBuilder.h"
 #include "mc/deps/core/image/Image.h"
@@ -57,35 +59,41 @@ void NightVision::load(Config const& config) noexcept {
     try {
         auto& key =
             ll::input::KeyRegistry::getInstance().getOrCreateKey(kKeyName, {config.nightvision.keyCode});
-        key.registerButtonDownHandler([this](::FocusImpact, ::IClientInstance&) { toggle(); });
-        mLoaded = true;
+        // Post-remap gate, mirroring Zoom::onPressed: the key stays remappable
+        // in game settings, but presses from any non-HUD screen (chat,
+        // Creative search, anvil, inventory, ...) belong to the UI, not us.
+        // Without this the toggle fires while typing (KeyRegistry binds every
+        // input stack when no mapping stack is configured).
+        key.registerButtonDownHandler([this](::FocusImpact, ::IClientInstance& client) { toggle(client); });
+        mLoaded.store(true, std::memory_order_relaxed);
     } catch (...) {
-        mLoaded = false;
+        mLoaded.store(false, std::memory_order_relaxed);
     }
 }
 
 void NightVision::install() noexcept {
-    if (mInstalled || !mLoaded) return;
+    if (mInstalled.load(std::memory_order_relaxed) || !mLoaded.load(std::memory_order_relaxed)) return;
     try {
         Hooks::hook();
-        mInstalled = true;
+        mInstalled.store(true, std::memory_order_relaxed);
     } catch (...) {
-        mInstalled = false;
+        mInstalled.store(false, std::memory_order_relaxed);
     }
 }
 
 void NightVision::uninstall() noexcept {
-    if (!mInstalled) return;
+    if (!mInstalled.load(std::memory_order_relaxed)) return;
+    mInstalled.store(false, std::memory_order_relaxed);
     try {
         Hooks::unhook();
     } catch (...) {
     }
     mState.setEnabled(false);
-    mInstalled = false;
 }
 
-void NightVision::toggle() {
-    if (!mInstalled) return;
+void NightVision::toggle(IClientInstance& client) {
+    if (!mInstalled.load(std::memory_order_relaxed)) return;
+    if (!lamina_view::isHudScreen(client.getScreenName())) return;
     mState.toggle();
     LaminaView::getInstance().getSelf().getLogger().debug("NightVision {}", mState.enabled() ? "on" : "off");
 }

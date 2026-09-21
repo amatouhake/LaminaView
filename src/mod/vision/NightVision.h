@@ -2,7 +2,10 @@
 
 #include "mod/vision/NightVisionState.h"
 
+#include <atomic>
+
 class BaseLightData;
+class IClientInstance;
 
 namespace lamina_view {
 struct Config;
@@ -22,9 +25,15 @@ namespace lamina_view::vision {
 /// Disabling restores rendering exactly because the hook becomes a
 /// pass-through.
 ///
-/// The toggle intentionally survives world unload/disconnect/dimension
-/// changes: it is a render-layer override with nothing world-bound, so there
-/// is no state that could stick.
+/// The toggle key is HUD-gated like Zoom: presses from any non-HUD screen
+/// (chat, Creative search, anvil, inventory, ...) belong to the UI and are
+/// ignored, so typing never toggles. The toggle intentionally survives world
+/// unload/disconnect/dimension changes: it is a render-layer override with
+/// nothing world-bound, so there is no state that could stick.
+///
+/// Threading: the toggle is written on the input thread (key handler) and
+/// read on the render thread (light-texture hook); all cross-thread fields
+/// are atomic.
 ///
 /// Separable from Zoom: own state, key, config section, hooks and cleanup.
 class NightVision {
@@ -42,17 +51,18 @@ public:
     /// the hook is gone). Idempotent.
     void uninstall() noexcept;
 
-    [[nodiscard]] bool installed() const { return mInstalled; }
+    [[nodiscard]] bool installed() const { return mInstalled.load(std::memory_order_relaxed); }
     [[nodiscard]] bool enabled() const { return mState.enabled(); }
 
-    /// Toggle entry point for the key handler.
-    void toggle();
+    /// Toggle entry point for the key handler. HUD-gated: non-HUD screens
+    /// own the key, not NightVision.
+    void toggle(IClientInstance& client);
 
     static void applyOverride(BaseLightData& lightData);
 
 private:
-    NightVisionState mState;
-    bool             mLoaded{false};
-    bool             mInstalled{false};
+    NightVisionState  mState;
+    std::atomic<bool> mLoaded{false};
+    std::atomic<bool> mInstalled{false};
 };
 } // namespace lamina_view::vision

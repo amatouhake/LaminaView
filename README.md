@@ -15,17 +15,19 @@ component, no cheats or commands, no status-effect injection.
 ## Current scope (MVP)
 
 * **NightVision** – binary fullbright-style toggle (default `N`, remappable
-  under *Settings → Keyboard & Mouse* as `LaminaView.nightvision`). Brightens
-  night, caves and dark interiors; underwater keeps its tint but is brightened
-  to match. Disabling restores the exact previous rendering.
+  under *Settings → Keyboard & Mouse* as `LaminaView.nightvision`). HUD-gated:
+  presses from any non-HUD screen (chat, Creative search, anvil, inventory,
+  ...) belong to the UI and never toggle, so typing never flips brightness.
+  Brightens night, caves and dark interiors; underwater keeps its tint but is
+  brightened to match. Disabling restores the exact previous rendering.
 * **Zoom** – hold-to-zoom (default `C`, remappable as `LaminaView.zoom`).
   Active only while held (and only from the HUD screen); mouse wheel adjusts
-  the level while zoomed; look sensitivity scales with the zoom level.
-  Releasing restores FOV and sensitivity exactly. Zoom never steals the wheel
-  from inventories or menus (opening a menu mid-hold drops the hold), and
-  vanilla spyglass behaviour is unchanged. A stuck hold is impossible by
-  construction: it clears on key-up, on any non-HUD screen, on app focus
-  loss/suspend, and on world unload/disconnect/dimension change.
+  the level while zoomed (scroll up zooms in); look sensitivity scales with
+  the zoom level. Releasing restores FOV and sensitivity exactly. Zoom never
+  steals the wheel from inventories or menus (opening a menu mid-hold drops
+  the hold), and vanilla spyglass behaviour is unchanged. A stuck hold is
+  impossible by construction: it clears on key-up, on any non-HUD screen, on
+  app focus loss/suspend, and on world unload/disconnect/dimension change.
 
 The two features are independent (separate state, keys, config and cleanup):
 if one fails to initialise, the other still works.

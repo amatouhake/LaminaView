@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+### Fixed
+
+- NightVision toggle is HUD-gated: key presses from chat, Creative search,
+  anvil, inventory and other non-HUD screens are ignored, so typing never
+  toggles brightness. Zoom wheel follows the universal convention (scroll up
+  zooms in, scroll down zooms out).
 - NightVision: client-side fullbright-style binary toggle (default `N`,
   remappable in the game's keyboard settings as `LaminaView.nightvision`).
   Brightens night, caves and dark interiors including underwater; writes
